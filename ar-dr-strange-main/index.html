@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Handrix </title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --accent: #00ffcc;
+            --accent2: #ff3cac;
+            --bg: #04040f;
+            --glass: rgba(8, 8, 20, 0.55);
+            --glass-border: rgba(255,255,255,0.08);
+            --panel-blur: blur(24px) saturate(180%);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg);
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* ── Video Layer ── */
+        .video-container {
+            position: absolute;
+            inset: 0;
+        }
+
+        .input_video {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            z-index: 0;
+            filter: brightness(0.55) contrast(1.15) saturate(1.1);
+        }
+
+        #bgCanvas, #mainCanvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        #bgCanvas { z-index: 1; pointer-events: none; }
+        #mainCanvas { z-index: 5; pointer-events: none; }
+
+        /* ── VIGNETTE ── */
+        .vignette {
+            position: absolute;
+            inset: 0;
+            z-index: 6;
+            pointer-events: none;
+            background: radial-gradient(ellipse at center, transparent 50%, rgba(4,4,15,0.75) 100%);
+        }
+
+        /* ── SCANLINES ── */
+        .scanlines {
+            position: absolute;
+            inset: 0;
+            z-index: 7;
+            pointer-events: none;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0,0,0,0.07) 2px,
+                rgba(0,0,0,0.07) 4px
+            );
+        }
+
+        /* ── HUD ── */
+        #hud {
+            position: absolute;
+            top: 24px;
+            left: 24px;
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            pointer-events: none;
+        }
+
+        .panel {
+            background: var(--glass);
+            backdrop-filter: var(--panel-blur);
+            -webkit-backdrop-filter: var(--panel-blur);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 16px 20px;
+            min-width: 200px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .panel::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+        }
+
+        .panel-title {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            font-weight: 500;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.35);
+            margin-bottom: 12px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 9px;
+        }
+        .stat-row:last-child { margin-bottom: 0; }
+
+        .stat-label {
+            font-size: 11px;
+            color: rgba(255,255,255,0.45);
+            letter-spacing: 0.05em;
+        }
+
+        .stat-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--accent);
+            text-shadow: 0 0 12px var(--accent);
+        }
+
+        /* Live indicator dot */
+        .live-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent);
+            box-shadow: 0 0 8px var(--accent);
+            display: inline-block;
+            margin-right: 7px;
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.8); }
+        }
+
+        /* Gesture display */
+        #gesture-display {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.08em;
+            color: #fff;
+            padding: 4px 0;
+        }
+
+        /* ── SPREAD BAR ── */
+        .spread-bar-track {
+            height: 3px;
+            background: rgba(255,255,255,0.08);
+            border-radius: 2px;
+            margin-top: 8px;
+            overflow: hidden;
+        }
+        .spread-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+            transition: width 0.1s ease;
+            box-shadow: 0 0 8px var(--accent);
+        }
+
+        /* ── BRAND WATERMARK (top-right) ── */
+        #brand {
+            position: absolute;
+            top: 24px;
+            right: 24px;
+            z-index: 20;
+            pointer-events: none;
+            text-align: right;
+        }
+
+        #brand h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 22px;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            color: #fff;
+            line-height: 1;
+        }
+
+        #brand h1 span {
+            color: var(--accent);
+            text-shadow: 0 0 20px var(--accent);
+        }
+
+        #brand p {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            letter-spacing: 0.2em;
+            color: rgba(255,255,255,0.3);
+            margin-top: 4px;
+            text-transform: uppercase;
+        }
+
+        /* ── THEME BAR ── */
+        #themes {
+            position: absolute;
+            bottom: 28px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            display: flex;
+            gap: 6px;
+            background: var(--glass);
+            backdrop-filter: var(--panel-blur);
+            -webkit-backdrop-filter: var(--panel-blur);
+            border: 1px solid var(--glass-border);
+            border-radius: 40px;
+            padding: 6px;
+            transition: opacity 0.5s;
+        }
+
+        .theme-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: rgba(255,255,255,0.5);
+            padding: 7px 16px;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 12px;
+            font-weight: 500;
+            letter-spacing: 0.04em;
+            white-space: nowrap;
+        }
+
+        .theme-btn:hover {
+            color: rgba(255,255,255,0.85);
+            background: rgba(255,255,255,0.06);
+        }
+
+        .theme-btn.active {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.18);
+            color: #fff;
+        }
+
+        /* Colored dot per theme */
+        .theme-btn::before {
+            content: '';
+            display: inline-block;
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+            position: relative;
+            top: -1px;
+        }
+        .theme-btn[data-theme="Sorcerer"]::before   { background: #ff7700; box-shadow: 0 0 6px #ff7700; }
+        .theme-btn[data-theme="Time Stone"]::before { background: #00ff44; box-shadow: 0 0 6px #00ff44; }
+        .theme-btn[data-theme="Rainbow"]::before    { background: #ff00ff; box-shadow: 0 0 6px #ff00ff; }
+        .theme-btn[data-theme="Cyberpunk"]::before  { background: #00f0ff; box-shadow: 0 0 6px #00f0ff; }
+        .theme-btn[data-theme="Lava"]::before       { background: #ff4400; box-shadow: 0 0 6px #ff4400; }
+        .theme-btn[data-theme="Ocean"]::before      { background: #00aaff; box-shadow: 0 0 6px #00aaff; }
+        .theme-btn[data-theme="Galaxy"]::before     { background: #aa44ff; box-shadow: 0 0 6px #aa44ff; }
+
+        /* ── FPS COUNTER (bottom-left) ── */
+        #fps-badge {
+            position: absolute;
+            bottom: 28px;
+            left: 24px;
+            z-index: 20;
+            pointer-events: none;
+            background: var(--glass);
+            backdrop-filter: var(--panel-blur);
+            -webkit-backdrop-filter: var(--panel-blur);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            padding: 8px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #fps-badge .fps-num {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 16px;
+            font-weight: 500;
+            color: #fff;
+            line-height: 1;
+        }
+        #fps-badge .fps-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            color: rgba(255,255,255,0.35);
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+        }
+
+        /* ── PINCH FLASH ── */
+        #pinch-flash {
+            position: absolute;
+            inset: 0;
+            z-index: 15;
+            pointer-events: none;
+            background: radial-gradient(ellipse at center, rgba(255,255,255,0.12) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.05s ease;
+        }
+
+        #pinch-flash.active {
+            opacity: 1;
+        }
+
+        /* ── GESTURE TOAST ── */
+        #gesture-toast {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.8);
+            z-index: 25;
+            pointer-events: none;
+            background: var(--glass);
+            backdrop-filter: var(--panel-blur);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 50px;
+            padding: 12px 28px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #fff;
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        #gesture-toast.show {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+        }
+
+        /* ── START OVERLAY ── */
+        #startOverlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(4, 4, 15, 0.96);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(20px);
+            transition: opacity 0.6s ease;
+        }
+
+        .start-logo {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 48px;
+            font-weight: 600;
+            letter-spacing: 0.15em;
+            margin-bottom: 8px;
+            line-height: 1;
+        }
+
+        .start-logo span {
+            color: var(--accent);
+            text-shadow: 0 0 40px var(--accent);
+        }
+
+        .start-tagline {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            letter-spacing: 0.25em;
+            color: rgba(255,255,255,0.35);
+            text-transform: uppercase;
+            margin-bottom: 56px;
+        }
+
+        .start-features {
+            display: flex;
+            gap: 32px;
+            margin-bottom: 56px;
+        }
+
+        .start-feature {
+            text-align: center;
+        }
+
+        .start-feature-icon {
+            font-size: 28px;
+            margin-bottom: 8px;
+            display: block;
+            opacity: 0.7;
+        }
+
+        .start-feature-label {
+            font-size: 11px;
+            color: rgba(255,255,255,0.35);
+            font-family: 'JetBrains Mono', monospace;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .start-btn {
+            padding: 16px 48px;
+            font-size: 13px;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            background: transparent;
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.25);
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .start-btn::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .start-btn:hover::before { opacity: 0.15; }
+        .start-btn:hover {
+            border-color: rgba(255,255,255,0.5);
+            box-shadow: 0 0 40px rgba(0,255,204,0.15);
+            transform: translateY(-2px);
+        }
+
+        .start-btn span { position: relative; z-index: 1; }
+
+        .start-hint {
+            margin-top: 24px;
+            font-size: 11px;
+            color: rgba(255,255,255,0.2);
+            font-family: 'JetBrains Mono', monospace;
+            letter-spacing: 0.1em;
+        }
+
+        /* ── CORNER DECORATIONS ── */
+        .corner {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            z-index: 20;
+            pointer-events: none;
+            opacity: 0.3;
+        }
+        .corner-tl { top: 12px; left: 12px; border-top: 1px solid #fff; border-left: 1px solid #fff; }
+        .corner-tr { top: 12px; right: 12px; border-top: 1px solid #fff; border-right: 1px solid #fff; }
+        .corner-bl { bottom: 12px; left: 12px; border-bottom: 1px solid #fff; border-left: 1px solid #fff; }
+        .corner-br { bottom: 12px; right: 12px; border-bottom: 1px solid #fff; border-right: 1px solid #fff; }
+
+        .hidden { opacity: 0; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <!-- START OVERLAY -->
+    <div id="startOverlay">
+        <div class="start-logo"> HAND<span>MATRIX</span></div>
+        <div class="start-tagline">Real-time hand tracking · AR experience</div>
+        
+        <div class="start-features">
+            <div class="start-feature">
+                <span class="start-feature-icon">✦</span>
+                <div class="start-feature-label">Magic Shields</div>
+            </div>
+            <div class="start-feature">
+                <span class="start-feature-icon">⚡</span>
+                <div class="start-feature-label">Lightning Arcs</div>
+            </div>
+            <div class="start-feature">
+                <span class="start-feature-icon">◈</span>
+                <div class="start-feature-label">7 Visual Modes</div>
+            </div>
+            <div class="start-feature">
+                <span class="start-feature-icon">♫</span>
+                <div class="start-feature-label">Spatial Audio</div>
+            </div>
+        </div>
+
+        <button class="start-btn" id="startBtn">
+            <span>Enter Experience</span>
+        </button>
+        <div class="start-hint">Camera permission required</div>
+    </div>
+
+    <!-- VIDEO + CANVAS STACK -->
+    <div class="video-container">
+        <video class="input_video" autoplay playsinline></video>
+        <canvas id="bgCanvas"></canvas>
+        <canvas id="mainCanvas"></canvas>
+    </div>
+
+    <!-- VISUAL OVERLAYS -->
+    <div class="vignette"></div>
+    <div class="scanlines"></div>
+    <div id="pinch-flash"></div>
+
+    <!-- CORNERS -->
+    <div class="corner corner-tl"></div>
+    <div class="corner corner-tr"></div>
+    <div class="corner corner-bl"></div>
+    <div class="corner corner-br"></div>
+
+    <!-- BRAND -->
+    <div id="brand" class="hidden">
+        <h1>HAND  <span>MATRIX</span></h1>
+        <p>Hand Tracking AR · v2.0</p>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+        <div class="panel">
+            <div class="panel-title">System</div>
+            <div class="stat-row">
+                <span class="stat-label"><span class="live-dot"></span>Hands</span>
+                <span class="stat-val" id="ui-hands">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Mode</span>
+                <span class="stat-val" id="ui-mode">Sorcerer</span>
+            </div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">Hand State</div>
+            <div id="gesture-display">Waiting...</div>
+            <div class="spread-bar-track">
+                <div class="spread-bar-fill" id="spread-bar" style="width: 0%"></div>
+            </div>
+            <div class="stat-row" style="margin-top: 10px;">
+                <span class="stat-label">Spread</span>
+                <span class="stat-val" id="ui-spread">0%</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- FPS -->
+    <div id="fps-badge" class="hidden">
+        <div>
+            <div class="fps-num" id="ui-fps">0</div>
+            <div class="fps-label">FPS</div>
+        </div>
+    </div>
+
+    <!-- GESTURE TOAST -->
+    <div id="gesture-toast"></div>
+
+    <!-- THEMES -->
+    <div id="themes" class="hidden">
+        <button class="theme-btn active" data-theme="Sorcerer">Sorcerer</button>
+        <button class="theme-btn" data-theme="Time Stone">Time Stone</button>
+        <button class="theme-btn" data-theme="Rainbow">Rainbow</button>
+        <button class="theme-btn" data-theme="Cyberpunk">Cyberpunk</button>
+        <button class="theme-btn" data-theme="Lava">Lava</button>
+        <button class="theme-btn" data-theme="Ocean">Ocean</button>
+        <button class="theme-btn" data-theme="Galaxy">Galaxy</button>
+    </div>
+
+<script>
+const videoElement = document.querySelector('.input_video');
+const bgCanvas    = document.getElementById('bgCanvas');
+const mainCanvas  = document.getElementById('mainCanvas');
+const bgCtx       = bgCanvas.getContext('2d');
+const ctx         = mainCanvas.getContext('2d');
+
+let width = window.innerWidth;
+let height = window.innerHeight;
+let time = 0;
+let lastTime = performance.now();
+let framesThisSecond = 0;
+let lastFpsTime = performance.now();
+let currentHands = [];
+let handVelocities = 0;
+let currentTheme = 'Sorcerer';
+
+const themes = {
+    'Rainbow':    (t, i, total) => `hsl(${(t * 80 + i * (360 / (total || 1))) % 360}, 100%, 62%)`,
+    'Cyberpunk':  (t, i, total) => (i % 2 === 0) ? '#ff003c' : '#00f0ff',
+    'Lava':       (t, i, total) => `hsl(${(8 + i * 8) % 38}, 100%, ${50 + Math.sin(t + i) * 10}%)`,
+    'Ocean':      (t, i, total) => `hsl(${190 + i * 18}, 100%, 60%)`,
+    'Galaxy':     (t, i, total) => `hsl(${255 + Math.sin(t * 2 + i) * 45}, 100%, 65%)`,
+    'Sorcerer':   (t, i, total) => {
+        const r = Math.floor(255);
+        const g = Math.floor(90 + Math.sin(t * 2 + i) * 40);
+        return `rgb(${r},${g},0)`;
+    },
+    'Time Stone': (t, i, total) => `hsl(${140 + Math.sin(t + i * 0.5) * 20}, 100%, 55%)`
+};
+
+const themeAccents = {
+    'Sorcerer':   '#ff7700',
+    'Time Stone': '#00ff44',
+    'Rainbow':    '#ff00ff',
+    'Cyberpunk':  '#00f0ff',
+    'Lava':       '#ff4400',
+    'Ocean':      '#00aaff',
+    'Galaxy':     '#aa44ff'
+};
+
+let particles = [];
+let ripples   = [];
+const FINGER_TIPS = [4, 8, 12, 16, 20];
+
+let matrixColumns = [];
+const fontSize = 14;
+let maxColumns  = 0;
+
+let audioCtx = null, humOsc = null, humGain = null;
+
+// UI refs
+const uiHands   = document.getElementById('ui-hands');
+const uiFps     = document.getElementById('ui-fps');
+const uiSpread  = document.getElementById('ui-spread');
+const uiMode    = document.getElementById('ui-mode');
+const spreadBar = document.getElementById('spread-bar');
+const gestureDisplay = document.getElementById('gesture-display');
+const gestureToast   = document.getElementById('gesture-toast');
+const pinchFlash     = document.getElementById('pinch-flash');
+
+/* ── RESIZE ── */
+function resize() {
+    width  = window.innerWidth;
+    height = window.innerHeight;
+    bgCanvas.width  = mainCanvas.width  = width;
+    bgCanvas.height = mainCanvas.height = height;
+    maxColumns   = Math.floor(width / fontSize);
+    matrixColumns = Array.from({ length: maxColumns }, () => Math.random() * height / fontSize);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ── THEME SWITCHER ── */
+document.querySelectorAll('.theme-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+        document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        currentTheme = e.target.getAttribute('data-theme');
+        uiMode.innerText = currentTheme;
+        document.documentElement.style.setProperty('--accent', themeAccents[currentTheme] || '#00ffcc');
+    });
+});
+
+/* ── START BUTTON ── */
+document.getElementById('startBtn').addEventListener('click', () => {
+    const overlay = document.getElementById('startOverlay');
+    overlay.style.opacity = '0';
+    setTimeout(() => overlay.style.display = 'none', 600);
+
+    document.getElementById('hud').classList.remove('hidden');
+    document.getElementById('themes').classList.remove('hidden');
+    document.getElementById('fps-badge').classList.remove('hidden');
+    document.getElementById('brand').classList.remove('hidden');
+
+    initAudio();
+    initMediaPipe();
+    requestAnimationFrame(renderLoop);
+});
+
+/* ── AUDIO ── */
+function initAudio() {
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        humOsc   = audioCtx.createOscillator();
+        humGain  = audioCtx.createGain();
+        humOsc.type = 'sine';
+        humOsc.frequency.value = 100;
+        humGain.gain.value = 0;
+        humOsc.connect(humGain);
+        humGain.connect(audioCtx.destination);
+        humOsc.start();
+    } catch(e) { console.warn('Audio failed', e); }
+}
+
+function triggerZap() {
+    if (!audioCtx) return;
+    const osc  = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(900, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.15);
+}
+
+function updateHum(hands) {
+    if (!audioCtx || !humGain) return;
+    if (hands.length < 2) {
+        humGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.1);
+        return;
+    }
+    const dx = hands[0][8].x - hands[1][8].x;
+    const dy = hands[0][8].y - hands[1][8].y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    humOsc.frequency.setTargetAtTime(100 + (1 - Math.min(dist, 1)) * 300, audioCtx.currentTime, 0.1);
+    humGain.gain.setTargetAtTime(0.05 + (1 - Math.min(dist, 1)) * 0.15, audioCtx.currentTime, 0.1);
+}
+
+/* ── HELPERS ── */
+function getDist(p1, p2) {
+    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+}
+
+function mapToCanvas(pt) {
+    return { x: pt.x * width, y: pt.y * height };
+}
+
+/* ── GESTURE TOAST ── */
+let toastTimeout = null;
+function showToast(msg) {
+    gestureToast.innerText = msg;
+    gestureToast.classList.add('show');
+    clearTimeout(toastTimeout);
+    toastTimeout = setTimeout(() => gestureToast.classList.remove('show'), 1200);
+}
+
+/* ── PINCH FLASH ── */
+function flashPinch() {
+    pinchFlash.classList.add('active');
+    setTimeout(() => pinchFlash.classList.remove('active'), 120);
+}
+
+/* ── GESTURES ── */
+let lastPinchState = [false, false];
+
+function detectGestures() {
+    if (!currentHands.length) return;
+
+    currentHands.forEach((hand, idx) => {
+        const thumb = hand[4], index = hand[8];
+        const dist  = getDist(thumb, index);
+        const isPinching = dist < 0.05;
+
+        if (isPinching && !lastPinchState[idx]) {
+            const mid = { x: (thumb.x + index.x) / 2, y: (thumb.y + index.y) / 2 };
+            createShockwave(mapToCanvas(mid), themes[currentTheme](time, 1, 1));
+            triggerZap();
+            flashPinch();
+            showToast('⚡ Pinch');
+        }
+        lastPinchState[idx] = isPinching;
+    });
+
+    if (currentHands[0]) {
+        const spread = getDist(currentHands[0][8], currentHands[0][20]);
+        const pct    = Math.min(Math.round(spread * 300), 100);
+        uiSpread.innerText = pct + '%';
+        spreadBar.style.width = pct + '%';
+
+        const gestureName = lastPinchState.includes(true) ? 'Pinch' : pct > 50 ? 'Open Hand' : 'Fist';
+        gestureDisplay.innerText = gestureName;
+    }
+}
+
+/* ── PARTICLES ── */
+function createParticles(pos, color, count = 2) {
+    for (let i = 0; i < count; i++) {
+        particles.push({
+            x: pos.x, y: pos.y,
+            vx: (Math.random() - 0.5) * 7,
+            vy: (Math.random() - 0.5) * 7,
+            life: 1.0,
+            color,
+            size: Math.random() * 2.5 + 0.5
+        });
+    }
+}
+
+function createShockwave(pos, color) {
+    ripples.push({
+        x: pos.x, y: pos.y,
+        radius: 0,
+        maxRadius: 160 + Math.random() * 80,
+        life: 1.0,
+        color
+    });
+}
+
+/* ── MAGIC SHIELD ── */
+function drawMagicShield(ctx, hand, t, color) {
+    const wrist     = mapToCanvas(hand[0]);
+    const middleMCP = mapToCanvas(hand[9]);
+    const cx = (wrist.x + middleMCP.x) / 2;
+    const cy = (wrist.y + middleMCP.y) / 2;
+    const middleTip = mapToCanvas(hand[12]);
+    let size = getDist(wrist, middleTip) * 1.5;
+    if (size < 30) return;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    const angle = Math.atan2(middleMCP.y - wrist.y, middleMCP.x - wrist.x);
+    ctx.rotate(angle - Math.PI / 2);
+
+    ctx.shadowBlur  = 25;
+    ctx.shadowColor = color;
+    ctx.lineWidth   = 1.5;
+    ctx.strokeStyle = color;
+    ctx.fillStyle   = color;
+    ctx.globalAlpha = 0.85;
+
+    // Outer ring
+    ctx.save();
+    ctx.rotate(t * 1.8);
+    drawMagicArcRing(ctx, size, 24);
+    drawMagicCircle(ctx, size * 0.92);
+    ctx.restore();
+
+    // 8-pointed star (two squares)
+    ctx.save();
+    ctx.rotate(-t * 1.3);
+    drawMagicPolygon(ctx, size * 0.8, 4);
+    ctx.rotate(Math.PI / 4);
+    drawMagicPolygon(ctx, size * 0.8, 4);
+    ctx.restore();
+
+    // Inner hexagram
+    ctx.save();
+    ctx.rotate(t * 2.8);
+    drawMagicCircle(ctx, size * 0.5);
+    drawMagicPolygon(ctx, size * 0.5, 3);
+    ctx.rotate(Math.PI / 3);
+    drawMagicPolygon(ctx, size * 0.5, 3);
+    ctx.restore();
+
+    // Center
+    ctx.save();
+    ctx.rotate(-t * 4.5);
+    drawMagicCircle(ctx, size * 0.2);
+    drawMagicArcRing(ctx, size * 0.15, 8);
+    ctx.restore();
+
+    // Inner sparks
+    ctx.globalAlpha = 0.6;
+    for (let i = 0; i < 6; i++) {
+        const r  = Math.random() * size * 0.8;
+        const a  = Math.random() * Math.PI * 2 + t;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * r, Math.sin(a) * r, Math.random() * 1.5 + 0.5, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    ctx.restore();
+}
+
+function drawMagicCircle(ctx, r) {
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke();
+}
+
+function drawMagicPolygon(ctx, r, sides) {
+    ctx.beginPath();
+    for (let i = 0; i <= sides; i++) {
+        const a = (i / sides) * Math.PI * 2;
+        i === 0 ? ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r)
+                : ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    ctx.stroke();
+}
+
+function drawMagicArcRing(ctx, r, segments) {
+    const dl = (Math.PI * 2) / (segments * 2);
+    for (let i = 0; i < segments; i++) {
+        ctx.beginPath();
+        ctx.arc(0, 0, r, i * dl * 2, i * dl * 2 + dl);
+        ctx.stroke();
+    }
+}
+
+/* ── BACKGROUND (matrix rain) ── */
+function drawBackground() {
+    bgCtx.globalCompositeOperation = 'destination-out';
+    bgCtx.fillStyle = `rgba(0,0,0,${0.12 + Math.min(handVelocities * 12, 0.45)})`;
+    bgCtx.fillRect(0, 0, width, height);
+    bgCtx.globalCompositeOperation = 'source-over';
+
+    const col = themes[currentTheme](time, 1, 1);
+    bgCtx.fillStyle = col;
+    bgCtx.font = `${fontSize}px 'JetBrains Mono', monospace`;
+
+    const speedMult = 1 + handVelocities * 80;
+    for (let i = 0; i < matrixColumns.length; i++) {
+        if (Math.random() > 0.96) {
+            bgCtx.globalAlpha = Math.random() * 0.6 + 0.1;
+            const char = String.fromCharCode(0x30A0 + Math.random() * 96);
+            bgCtx.fillText(char, i * fontSize, matrixColumns[i] * fontSize);
+        }
+        matrixColumns[i] += Math.random() * speedMult;
+        if (matrixColumns[i] * fontSize > height && Math.random() > 0.9) {
+            matrixColumns[i] = 0;
+        }
+    }
+    bgCtx.globalAlpha = 1.0;
+}
+
+/* ── PHYSICS ── */
+function updatePhysics() {
+    // Particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x  += p.vx; p.y += p.vy;
+        p.life -= 0.025;
+        p.vy += 0.08;
+        if (p.life <= 0) { particles.splice(i, 1); continue; }
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.life;
+        ctx.fill();
+    }
+
+    // Ripples
+    for (let i = ripples.length - 1; i >= 0; i--) {
+        const r = ripples[i];
+        r.radius += (r.maxRadius - r.radius) * 0.09;
+        r.life   -= 0.028;
+        if (r.life <= 0) { ripples.splice(i, 1); continue; }
+
+        // Multi-ring ripple
+        for (let ring = 0; ring < 3; ring++) {
+            const rr = r.radius * (1 - ring * 0.18);
+            ctx.beginPath();
+            ctx.arc(r.x, r.y, rr, 0, Math.PI * 2);
+            ctx.strokeStyle = r.color;
+            ctx.lineWidth   = (3 - ring) * r.life;
+            ctx.globalAlpha = r.life * (1 - ring * 0.3);
+            ctx.stroke();
+        }
+    }
+    ctx.globalAlpha = 1.0;
+}
+
+/* ── RENDER LOOP ── */
+function renderLoop(timestamp) {
+    requestAnimationFrame(renderLoop);
+
+    const dt = (timestamp - lastTime) / 1000;
+    lastTime  = timestamp;
+    time     += dt;
+
+    framesThisSecond++;
+    if (timestamp > lastFpsTime + 1000) {
+        uiFps.innerText    = framesThisSecond;
+        framesThisSecond   = 0;
+        lastFpsTime        = timestamp;
+    }
+
+    drawBackground();
+
+    // Fade main canvas
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.globalCompositeOperation = 'screen';
+
+    updatePhysics();
+
+    if (currentHands.length > 0) {
+        currentHands.forEach((hand, handIdx) => {
+            const glowColor = themes[currentTheme](time, handIdx, 2);
+
+            // Skeleton
+            drawConnectors(ctx, hand, HAND_CONNECTIONS, { color: glowColor + 'aa', lineWidth: 1.5 });
+
+            // Magic Shield
+            const spread = getDist(hand[8], hand[20]);
+            if (Math.min(Math.round(spread * 300), 100) > 50) {
+                drawMagicShield(ctx, hand, time, glowColor);
+            }
+
+            // Fingertips
+            ctx.shadowBlur  = 20;
+            ctx.shadowColor = glowColor;
+
+            FINGER_TIPS.forEach((tipIdx, i) => {
+                const pt  = mapToCanvas(hand[tipIdx]);
+                const col = themes[currentTheme](time, i, FINGER_TIPS.length);
+
+                // Outer glow ring
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
+                ctx.strokeStyle = col + '55';
+                ctx.lineWidth   = 3;
+                ctx.stroke();
+
+                // Core dot
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+
+                if (Math.random() > 0.65) createParticles(pt, col, 1);
+            });
+            ctx.shadowBlur = 0;
+
+            // Palm glow
+            const wrist = mapToCanvas(hand[0]);
+            ctx.beginPath();
+            ctx.arc(wrist.x, wrist.y, 6, 0, Math.PI * 2);
+            ctx.fillStyle = glowColor + '44';
+            ctx.shadowBlur  = 30;
+            ctx.shadowColor = glowColor;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+        });
+
+        // Two-hand interactions
+        if (currentHands.length >= 2) {
+            FINGER_TIPS.forEach((tipIdx, i) => {
+                const pt1  = mapToCanvas(currentHands[0][tipIdx]);
+                const pt2  = mapToCanvas(currentHands[1][tipIdx]);
+                const dist = getDist(pt1, pt2);
+                const col  = themes[currentTheme](time, i, FINGER_TIPS.length);
+
+                // Lightning when close
+                if (dist < 160 && Math.random() > 0.45) {
+                    const segments = 4;
+                    ctx.beginPath();
+                    ctx.moveTo(pt1.x, pt1.y);
+                    let lx = pt1.x, ly = pt1.y;
+                    for (let s = 1; s <= segments; s++) {
+                        const t2 = s / segments;
+                        const nx = pt1.x + (pt2.x - pt1.x) * t2 + (Math.random() - 0.5) * 40 * (1 - t2);
+                        const ny = pt1.y + (pt2.y - pt1.y) * t2 + (Math.random() - 0.5) * 40 * (1 - t2);
+                        ctx.lineTo(nx, ny);
+                        lx = nx; ly = ny;
+                    }
+                    ctx.strokeStyle = '#ffffffcc';
+                    ctx.shadowBlur  = 15;
+                    ctx.shadowColor = col;
+                    ctx.lineWidth   = 1.5;
+                    ctx.stroke();
+                    ctx.shadowBlur  = 0;
+                }
+
+                // Gradient connecting line
+                const grad = ctx.createLinearGradient(pt1.x, pt1.y, pt2.x, pt2.y);
+                grad.addColorStop(0,   themes[currentTheme](time, i, 5));
+                grad.addColorStop(0.5, themes[currentTheme](time, i + 1, 5));
+                grad.addColorStop(1,   themes[currentTheme](time, i + 2, 5));
+                ctx.beginPath();
+                ctx.moveTo(pt1.x, pt1.y);
+                ctx.lineTo(pt2.x, pt2.y);
+                ctx.strokeStyle = grad;
+                ctx.lineWidth   = 3;
+                ctx.shadowBlur  = 8;
+                ctx.shadowColor = col;
+                ctx.stroke();
+                ctx.shadowBlur  = 0;
+            });
+        }
+
+        detectGestures();
+        uiHands.innerText = currentHands.length;
+    } else {
+        uiHands.innerText = '0';
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+}
+
+/* ── MEDIAPIPE ── */
+function initMediaPipe() {
+    const hands = new Hands({
+        locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+    });
+
+    hands.onResults(results => {
+        if (!audioCtx) return;
+
+        if (currentHands.length > 0 && results.multiHandLandmarks?.length > 0) {
+            const oldP = currentHands[0][8];
+            const newP = results.multiHandLandmarks[0][8];
+            if (oldP && newP) handVelocities = getDist(oldP, newP);
+        } else {
+            handVelocities = 0;
+        }
+
+        currentHands = results.multiHandLandmarks || [];
+        updateHum(currentHands);
+    });
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({ image: videoElement }); },
+        width: 1280,
+        height: 720,
+        facingMode: 'user'
+    });
+    camera.start();
+}
+</script>
+</body>
+</html>
